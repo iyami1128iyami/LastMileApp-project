@@ -98,4 +98,174 @@ data class PlayerStats(
 val AVATAR_LIST = listOf(
     AvatarItem(R.drawable.avatar_1, "さんぽ初心者", 0, "avatar_1"),
     AvatarItem(R.drawable.avatar_2, "ダッシュランナー", 50, "avatar_2"),
-    AvatarItem
+    AvatarItem(R.drawable.avatar_3, "街乗りサイクリスト", 120, "avatar_3"),
+    AvatarItem(R.drawable.avatar_4, "モビリティマスター", 250, "avatar_4"),
+    AvatarItem(R.drawable.avatar_5, "シティクルーズ", 500, "avatar_5"),
+    AvatarItem(R.drawable.avatar_6, "ラストワンマイル王", 1000, "avatar_6")
+)
+
+fun getAvatarByKey(key: String): AvatarItem {
+    return AVATAR_LIST.find { it.key == key } ?: AVATAR_LIST[0]
+}
+
+// --- ゲームデータの保存・読み込み ---
+class GameStorage(context: Context) {
+    private val prefs = context.getSharedPreferences("lastmile_game_prefs", Context.MODE_PRIVATE)
+
+    fun loadStats(): PlayerStats {
+        val unlocked = prefs.getStringSet("unlocked_avatars", setOf("avatar_1")) ?: setOf("avatar_1")
+        return PlayerStats(
+            launchCount = prefs.getInt("launch_count", 0),
+            totalDistanceMeters = prefs.getFloat("total_distance", 0f),
+            totalSteps = prefs.getInt("total_steps", 0),
+            xp = prefs.getInt("xp", 0),
+            coins = prefs.getInt("coins", 0),
+            selectedAvatarKey = prefs.getString("avatar_key", "avatar_1") ?: "avatar_1",
+            unlockedAvatarKeys = unlocked
+        )
+    }
+
+    fun recordLaunch(): PlayerStats {
+        val current = loadStats()
+        val updated = current.copy(
+            launchCount = current.launchCount + 1,
+            xp = current.xp + 20,
+            coins = current.coins + 10 // 起動ボーナス +10コイン
+        )
+        saveStats(updated)
+        return updated
+    }
+
+    fun addDistance(meters: Float): PlayerStats {
+        val current = loadStats()
+        val gained = (meters / 10f).toInt() // 10mごとに +1XP & +1コイン
+        val updated = current.copy(
+            totalDistanceMeters = current.totalDistanceMeters + meters,
+            xp = current.xp + gained,
+            coins = current.coins + gained
+        )
+        saveStats(updated)
+        return updated
+    }
+
+    // 歩数センサーの累計値から増分を計算して加算
+    fun updateStepsFromSensor(sensorTotalSteps: Int): PlayerStats {
+        val lastSensorVal = prefs.getInt("last_sensor_steps", -1)
+        prefs.edit().putInt("last_sensor_steps", sensorTotalSteps).apply()
+
+        val current = loadStats()
+        if (lastSensorVal == -1 || sensorTotalSteps < lastSensorVal) {
+            return current
+        }
+
+        val deltaSteps = sensorTotalSteps - lastSensorVal
+        if (deltaSteps <= 0) return current
+
+        val newTotalSteps = current.totalSteps + deltaSteps
+        val oldCoinSteps = current.totalSteps / 10
+        val newCoinSteps = newTotalSteps / 10
+        val gainedCoins = (newCoinSteps - oldCoinSteps).coerceAtLeast(0)
+
+        val updated = current.copy(
+            totalSteps = newTotalSteps,
+            xp = current.xp + gainedCoins * 2,
+            coins = current.coins + gainedCoins
+        )
+        saveStats(updated)
+        return updated
+    }
+
+    fun addActionBonus(): PlayerStats {
+        val current = loadStats()
+        val updated = current.copy(
+            xp = current.xp + 30,
+            coins = current.coins + 15 // 検索ボーナス +15コイン
+        )
+        saveStats(updated)
+        return updated
+    }
+
+    fun buyAndSelectAvatar(item: AvatarItem): PlayerStats {
+        val current = loadStats()
+        if (current.unlockedAvatarKeys.contains(item.key)) {
+            val updated = current.copy(selectedAvatarKey = item.key)
+            saveStats(updated)
+            return updated
+        }
+        if (current.coins < item.priceCoins) return current
+
+        val newUnlocked = current.unlockedAvatarKeys + item.key
+        val updated = current.copy(
+            coins = current.coins - item.priceCoins,
+            selectedAvatarKey = item.key,
+            unlockedAvatarKeys = newUnlocked
+        )
+        saveStats(updated)
+        return updated
+    }
+
+    fun getLastSavedLocation(): GeoPoint? {
+        if (!prefs.contains("last_lat")) return null
+        val lat = prefs.getFloat("last_lat", 0f).toDouble()
+        val lon = prefs.getFloat("last_lon", 0f).toDouble()
+        return GeoPoint(lat, lon)
+    }
+
+    fun saveLastLocation(point: GeoPoint) {
+        prefs.edit()
+            .putFloat("last_lat", point.latitude.toFloat())
+            .putFloat("last_lon", point.longitude.toFloat())
+            .apply()
+    }
+
+    private fun saveStats(stats: PlayerStats) {
+        prefs.edit()
+            .putInt("launch_count", stats.launchCount)
+            .putFloat("total_distance", stats.totalDistanceMeters)
+            .putInt("total_steps", stats.totalSteps)
+            .putInt("xp", stats.xp)
+            .putInt("coins", stats.coins)
+            .putString("avatar_key", stats.selectedAvatarKey)
+            .putStringSet("unlocked_avatars", stats.unlockedAvatarKeys)
+            .apply()
+    }
+}
+
+class MainActivity : ComponentActivity() {
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        Configuration.getInstance().userAgentValue = "LastMileApp/1.0 (iyami1128iyami)"
+        setContent {
+            MaterialTheme {
+                LastMileAppScreen()
+            }
+        }
+    }
+}
+
+@SuppressLint("MissingPermission")
+@Composable
+fun LastMileAppScreen() {
+    val context = LocalContext.current
+    val fusedLocationClient = remember { LocationServices.getFusedLocationProviderClient(context) }
+    val gameStorage = remember { GameStorage(context) }
+
+    var playerStats by remember { mutableStateOf(gameStorage.recordLaunch()) }
+    var showAvatarDialog by remember { mutableStateOf(false) }
+
+    var currentLocation by remember { mutableStateOf(GeoPoint(35.6812, 139.7671)) }
+    var destination by remember { mutableStateOf<GeoPoint?>(null) }
+    var stations by remember { mutableStateOf<List<BikeStation>>(emptyList()) }
+    var statusText by remember { mutableStateOf("地図を長押しして目的地を設定してください") }
+
+    var hasLocationPermission by remember {
+        mutableStateOf(
+            ContextCompat.checkSelfPermission(
+                context, Manifest.permission.ACCESS_FINE_LOCATION
+            ) == PackageManager.PERMISSION_GRANTED
+        )
+    }
+
+    var hasActivityPermission by remember {
+        mutableStateOf(
+            if (Build.VERSION.SDK_INT >= Build.VERSION_
