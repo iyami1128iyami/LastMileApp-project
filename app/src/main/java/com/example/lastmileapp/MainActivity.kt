@@ -33,6 +33,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
@@ -41,6 +42,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.compose.ui.zIndex
 import androidx.core.content.ContextCompat
 import com.google.android.gms.location.LocationServices
 import kotlinx.coroutines.Dispatchers
@@ -255,6 +257,7 @@ fun LastMileAppScreen() {
 
     var currentLocation by remember { mutableStateOf(GeoPoint(35.6812, 139.7671)) }
     var destination by remember { mutableStateOf<GeoPoint?>(null) }
+    var lastCenteredTarget by remember { mutableStateOf<GeoPoint?>(null) }
     var stations by remember { mutableStateOf<List<BikeStation>>(emptyList()) }
     var statusText by remember { mutableStateOf("地図を長押しして目的地を設定してください") }
 
@@ -355,11 +358,13 @@ fun LastMileAppScreen() {
     val currentAvatar = getAvatarByKey(playerStats.selectedAvatarKey)
 
     Column(modifier = Modifier.fillMaxSize()) {
+        // ヘッダー（常に最前面に固定）
         Surface(
             color = MaterialTheme.colorScheme.primaryContainer,
             tonalElevation = 4.dp,
             modifier = Modifier
                 .fillMaxWidth()
+                .zIndex(2f)
                 .clickable { showAvatarDialog = true }
         ) {
             Row(
@@ -420,7 +425,13 @@ fun LastMileAppScreen() {
             }
         }
 
-        Surface(color = MaterialTheme.colorScheme.surfaceVariant, modifier = Modifier.fillMaxWidth()) {
+        // サブステータス（常に地図より前面に表示）
+        Surface(
+            color = MaterialTheme.colorScheme.surfaceVariant,
+            modifier = Modifier
+                .fillMaxWidth()
+                .zIndex(2f)
+        ) {
             Text(
                 text = statusText,
                 modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
@@ -428,16 +439,26 @@ fun LastMileAppScreen() {
             )
         }
 
-        Box(modifier = Modifier.weight(1f)) {
+        // 地図エリア（clipToBounds で枠外への描画はみ出しを防止）
+        Box(
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxWidth()
+                .clipToBounds()
+                .zIndex(0f)
+        ) {
             AndroidView(
-                modifier = Modifier.fillMaxSize(),
+                modifier = Modifier
+                    .fillMaxSize()
+                    .clipToBounds(),
                 factory = { ctx ->
                     MapView(ctx).apply {
+                        // 国土地理院 淡色地図（白ベースで見やすい無料地図）
                         setTileSource(
                             XYTileSource(
-                                "GSI_STD",
+                                "GSI_PALE",
                                 5, 18, 256, ".png",
-                                arrayOf("https://cyberjapandata.gsi.go.jp/xyz/std/")
+                                arrayOf("https://cyberjapandata.gsi.go.jp/xyz/pale/")
                             )
                         )
                         setMultiTouchControls(true)
@@ -486,12 +507,18 @@ fun LastMileAppScreen() {
                         mapView.overlays.add(destMarker)
                     }
 
-                    mapView.controller.animateTo(destination ?: currentLocation)
+                    // 現在地や目的地が変わった時だけカメラを移動（手動スクロールを邪魔しない）
+                    val target = destination ?: currentLocation
+                    if (lastCenteredTarget != target) {
+                        mapView.controller.animateTo(target)
+                        lastCenteredTarget = target
+                    }
                     mapView.invalidate()
                 }
             )
         }
 
+        // 目的地比較カード（常に地図より前面に表示）
         destination?.let { dest ->
             val options = remember(currentLocation, dest, stations) {
                 buildTransportOptions(currentLocation, dest, stations)
@@ -501,6 +528,7 @@ fun LastMileAppScreen() {
                 modifier = Modifier
                     .fillMaxWidth()
                     .heightIn(max = 280.dp)
+                    .zIndex(2f)
             ) {
                 Column(modifier = Modifier.padding(12.dp)) {
                     Row(
