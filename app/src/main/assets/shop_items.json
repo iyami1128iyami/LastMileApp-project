@@ -1,0 +1,74 @@
+[
+  {
+    "id": "item_radar",
+    "emoji": "🧭",
+    "name": "未取得レーダー",
+    "price": 80,
+    "category": "探索",
+    "desc": "次の探索で未登録のブレインロットが必ず1体以上出現"
+  },
+  {
+    "id": "item_incense",
+    "emoji": "✨",
+    "name": "レア呼び寄せおこう",
+    "price": 100,
+    "category": "探索",
+    "desc": "次の探索でSRまたはSSRが確定出現"
+  },
+  {
+    "id": "item_city",
+    "emoji": "🏙️",
+    "name": "街の招待状",
+    "price": 40,
+    "category": "探索",
+    "desc": "次の探索で「街タイプ」のみ出現させる"
+  },
+  {
+    "id": "item_jungle",
+    "emoji": "🌴",
+    "name": "ジャングル笛",
+    "price": 40,
+    "category": "探索",
+    "desc": "次の探索で「ジャングルタイプ」のみ出現させる"
+  },
+  {
+    "id": "item_potion",
+    "emoji": "☕",
+    "name": "カプチーノ回復薬",
+    "price": 25,
+    "category": "バトル",
+    "desc": "バトル中に使うと自分のHPを全回復する"
+  },
+  {
+    "id": "item_tabasco",
+    "emoji": "🌶️",
+    "name": "激辛タバスコ",
+    "price": 35,
+    "category": "バトル",
+    "desc": "バトル中に使うとその戦闘中ずっと攻撃力1.5倍"
+  },
+  {
+    "id": "item_stun",
+    "emoji": "⚡",
+    "name": "スタン・ホットスポット",
+    "price": 30,
+    "category": "バトル",
+    "desc": "バトル中に使うと敵の反撃を1ターン封じる"
+  },
+  {
+    "id": "item_stone",
+    "emoji": "🔨",
+    "name": "武器強化ストーン",
+    "price": 60,
+    "category": "育成",
+    "desc": "今装備している武器の攻撃力を永続で +5 強化"
+  },
+  {
+    "id": "item_oil",
+    "emoji": "👟",
+    "name": "爆速スニーカーオイル",
+    "price": 50,
+    "category": "育成",
+    "desc": "次のバトル3回分の獲得XPが2倍になる"
+  }
+]

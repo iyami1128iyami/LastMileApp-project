@@ -1,0 +1,114 @@
+[
+  {
+    "id": "w_hand",
+    "name": "すで",
+    "rarity": "N",
+    "atkBonus": 0,
+    "emoji": "✊",
+    "desc": "初期装備。まずはガチャでブレインロット武器を狙おう"
+  },
+  {
+    "id": "w_pencil",
+    "name": "パクラフマトの鉛筆",
+    "rarity": "N",
+    "atkBonus": 8,
+    "emoji": "✏️",
+    "desc": "パクラフマトママットが落とした黄色い鉛筆"
+  },
+  {
+    "id": "w_salt",
+    "name": "ガラマラマンの塩ボトル",
+    "rarity": "N",
+    "atkBonus": 10,
+    "emoji": "🧂",
+    "desc": "振るとしょっぱい粉が飛び出す調味料ボトル"
+  },
+  {
+    "id": "w_banana",
+    "name": "チンパンジーニのバナナ",
+    "rarity": "N",
+    "atkBonus": 12,
+    "emoji": "🍌",
+    "desc": "謎のリズムでしなるジャングル産のバナナ"
+  },
+  {
+    "id": "w_sushi",
+    "name": "プッシーニの寿司ブレード",
+    "rarity": "N",
+    "atkBonus": 14,
+    "emoji": "🍣",
+    "desc": "海苔でしっかり巻かれた鮮度抜群のネタ"
+  },
+  {
+    "id": "w_dumbbell",
+    "name": "ウディンディンのダンベル",
+    "rarity": "R",
+    "atkBonus": 22,
+    "emoji": "🍊",
+    "desc": "マッチョみかんが毎日振り回している激重ダンベル"
+  },
+  {
+    "id": "w_crab",
+    "name": "シェフ・クラブのハサミ",
+    "rarity": "R",
+    "atkBonus": 26,
+    "emoji": "🦀",
+    "desc": "どんな食材も一撃で捌く料理人の巨大なハサミ"
+  },
+  {
+    "id": "w_sandal",
+    "name": "リリリのサボテンサンダル",
+    "rarity": "R",
+    "atkBonus": 30,
+    "emoji": "🌵",
+    "desc": "砂漠を歩き抜くトゲ付きの頑丈なサンダル"
+  },
+  {
+    "id": "w_wifi",
+    "name": "ホットスポットのWi-Fi砲",
+    "rarity": "R",
+    "atkBonus": 34,
+    "emoji": "📶",
+    "desc": "最強の電波ビームを放つガイコツのスマホ"
+  },
+  {
+    "id": "w_tungbat",
+    "name": "トゥントゥンの木のバット",
+    "rarity": "SR",
+    "atkBonus": 52,
+    "emoji": "🪵",
+    "desc": "トゥントゥントゥンサーフール愛用の伝説の木製バット"
+  },
+  {
+    "id": "w_katana",
+    "name": "アサシーノの二刀流刀",
+    "rarity": "SR",
+    "atkBonus": 60,
+    "emoji": "⚔️",
+    "desc": "カプチーノ・アサシーノが振るう超高速の双剣"
+  },
+  {
+    "id": "w_saturn",
+    "name": "サトゥルニータの土星リング",
+    "rarity": "SR",
+    "atkBonus": 68,
+    "emoji": "🪐",
+    "desc": "宇宙の力を宿したラ・ヴァカの輝く輪っか"
+  },
+  {
+    "id": "w_sneaker",
+    "name": "トララレロの青いスニーカー",
+    "rarity": "SSR",
+    "atkBonus": 105,
+    "emoji": "👟",
+    "desc": "砂浜を音速で駆けるサメが履いていた伝説の靴"
+  },
+  {
+    "id": "w_bomb",
+    "name": "ボンバルディーロの爆撃ミサイル",
+    "rarity": "SSR",
+    "atkBonus": 125,
+    "emoji": "🚀",
+    "desc": "空の覇者クロコディロから放たれる規格外の最終兵器"
+  }
+]
