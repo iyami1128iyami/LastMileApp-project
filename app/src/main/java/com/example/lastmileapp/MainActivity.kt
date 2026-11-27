@@ -3,24 +3,18 @@ package com.example.lastmileapp
 import android.Manifest
 import android.annotation.SuppressLint
 import android.content.Context
-import android.content.Intent
 import android.content.pm.PackageManager
-import android.graphics.Bitmap
-import android.graphics.BitmapFactory
-import android.graphics.drawable.BitmapDrawable
 import android.hardware.Sensor
 import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
 import android.hardware.SensorManager
-import android.location.Location
-import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -34,209 +28,35 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.zIndex
 import androidx.core.content.ContextCompat
 import com.google.android.gms.location.LocationServices
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
-import org.json.JSONObject
-import org.osmdroid.config.Configuration
-import org.osmdroid.events.MapEventsReceiver
-import org.osmdroid.tileprovider.tilesource.XYTileSource
-import org.osmdroid.util.GeoPoint
-import org.osmdroid.views.MapView
-import org.osmdroid.views.overlay.MapEventsOverlay
-import org.osmdroid.views.overlay.Marker
-import java.net.HttpURLConnection
-import java.net.URL
-import kotlin.math.ceil
+import com.google.android.gms.maps.CameraUpdateFactory
+import com.google.android.gms.maps.MapsInitializer
+import com.google.android.gms.maps.model.BitmapDescriptorFactory
+import com.google.android.gms.maps.model.CameraPosition
+import com.google.android.gms.maps.model.LatLng
+import com.google.maps.android.compose.GoogleMap
+import com.google.maps.android.compose.MapProperties
+import com.google.maps.android.compose.MapUiSettings
+import com.google.maps.android.compose.Marker
+import com.google.maps.android.compose.MarkerState
+import com.google.maps.android.compose.rememberCameraPositionState
 import kotlin.math.roundToInt
-
-// --- データモデル ---
-data class BikeStation(
-    val id: String,
-    val name: String,
-    val lat: Double,
-    val lon: Double,
-    val bikesAvailable: Int,
-    val distanceMeters: Float
-)
-
-data class TransportOption(
-    val title: String,
-    val subtitle: String,
-    val estimate: String,
-    val actionUrl: String
-)
-
-data class AvatarItem(
-    val imageResId: Int,
-    val name: String,
-    val priceCoins: Int, // 解放に必要なコイン数
-    val key: String
-)
-
-data class PlayerStats(
-    val launchCount: Int,
-    val totalDistanceMeters: Float,
-    val totalSteps: Int,
-    val xp: Int,
-    val coins: Int,
-    val selectedAvatarKey: String,
-    val unlockedAvatarKeys: Set<String>
-) {
-    val level: Int get() = (xp / 100) + 1
-    val currentLevelXp: Int get() = xp % 100
-}
-
-val AVATAR_LIST = listOf(
-    AvatarItem(R.drawable.avatar_1, "さんぽ初心者", 0, "avatar_1"),
-    AvatarItem(R.drawable.avatar_2, "ダッシュランナー", 50, "avatar_2"),
-    AvatarItem(R.drawable.avatar_3, "街乗りサイクリスト", 120, "avatar_3"),
-    AvatarItem(R.drawable.avatar_4, "モビリティマスター", 250, "avatar_4"),
-    AvatarItem(R.drawable.avatar_5, "シティクルーズ", 500, "avatar_5"),
-    AvatarItem(R.drawable.avatar_6, "ラストワンマイル王", 1000, "avatar_6")
-)
-
-fun getAvatarByKey(key: String): AvatarItem {
-    return AVATAR_LIST.find { it.key == key } ?: AVATAR_LIST[0]
-}
-
-// --- ゲームデータの保存・読み込み ---
-class GameStorage(context: Context) {
-    private val prefs = context.getSharedPreferences("lastmile_game_prefs", Context.MODE_PRIVATE)
-
-    fun loadStats(): PlayerStats {
-        val unlocked = prefs.getStringSet("unlocked_avatars", setOf("avatar_1")) ?: setOf("avatar_1")
-        return PlayerStats(
-            launchCount = prefs.getInt("launch_count", 0),
-            totalDistanceMeters = prefs.getFloat("total_distance", 0f),
-            totalSteps = prefs.getInt("total_steps", 0),
-            xp = prefs.getInt("xp", 0),
-            coins = prefs.getInt("coins", 0),
-            selectedAvatarKey = prefs.getString("avatar_key", "avatar_1") ?: "avatar_1",
-            unlockedAvatarKeys = unlocked
-        )
-    }
-
-    fun recordLaunch(): PlayerStats {
-        val current = loadStats()
-        val updated = current.copy(
-            launchCount = current.launchCount + 1,
-            xp = current.xp + 20,
-            coins = current.coins + 10 // 起動ボーナス +10コイン
-        )
-        saveStats(updated)
-        return updated
-    }
-
-    fun addDistance(meters: Float): PlayerStats {
-        val current = loadStats()
-        val gained = (meters / 10f).toInt() // 10mごとに +1XP & +1コイン
-        val updated = current.copy(
-            totalDistanceMeters = current.totalDistanceMeters + meters,
-            xp = current.xp + gained,
-            coins = current.coins + gained
-        )
-        saveStats(updated)
-        return updated
-    }
-
-    // 歩数センサーの累計値から増分を計算して加算
-    fun updateStepsFromSensor(sensorTotalSteps: Int): PlayerStats {
-        val lastSensorVal = prefs.getInt("last_sensor_steps", -1)
-        prefs.edit().putInt("last_sensor_steps", sensorTotalSteps).apply()
-
-        val current = loadStats()
-        if (lastSensorVal == -1 || sensorTotalSteps < lastSensorVal) {
-            return current
-        }
-
-        val deltaSteps = sensorTotalSteps - lastSensorVal
-        if (deltaSteps <= 0) return current
-
-        val newTotalSteps = current.totalSteps + deltaSteps
-        val oldCoinSteps = current.totalSteps / 10
-        val newCoinSteps = newTotalSteps / 10
-        val gainedCoins = (newCoinSteps - oldCoinSteps).coerceAtLeast(0)
-
-        val updated = current.copy(
-            totalSteps = newTotalSteps,
-            xp = current.xp + gainedCoins * 2,
-            coins = current.coins + gainedCoins
-        )
-        saveStats(updated)
-        return updated
-    }
-
-    fun addActionBonus(): PlayerStats {
-        val current = loadStats()
-        val updated = current.copy(
-            xp = current.xp + 30,
-            coins = current.coins + 15 // 検索ボーナス +15コイン
-        )
-        saveStats(updated)
-        return updated
-    }
-
-    fun buyAndSelectAvatar(item: AvatarItem): PlayerStats {
-        val current = loadStats()
-        if (current.unlockedAvatarKeys.contains(item.key)) {
-            val updated = current.copy(selectedAvatarKey = item.key)
-            saveStats(updated)
-            return updated
-        }
-        if (current.coins < item.priceCoins) return current
-
-        val newUnlocked = current.unlockedAvatarKeys + item.key
-        val updated = current.copy(
-            coins = current.coins - item.priceCoins,
-            selectedAvatarKey = item.key,
-            unlockedAvatarKeys = newUnlocked
-        )
-        saveStats(updated)
-        return updated
-    }
-
-    fun getLastSavedLocation(): GeoPoint? {
-        if (!prefs.contains("last_lat")) return null
-        val lat = prefs.getFloat("last_lat", 0f).toDouble()
-        val lon = prefs.getFloat("last_lon", 0f).toDouble()
-        return GeoPoint(lat, lon)
-    }
-
-    fun saveLastLocation(point: GeoPoint) {
-        prefs.edit()
-            .putFloat("last_lat", point.latitude.toFloat())
-            .putFloat("last_lon", point.longitude.toFloat())
-            .apply()
-    }
-
-    private fun saveStats(stats: PlayerStats) {
-        prefs.edit()
-            .putInt("launch_count", stats.launchCount)
-            .putFloat("total_distance", stats.totalDistanceMeters)
-            .putInt("total_steps", stats.totalSteps)
-            .putInt("xp", stats.xp)
-            .putInt("coins", stats.coins)
-            .putString("avatar_key", stats.selectedAvatarKey)
-            .putStringSet("unlocked_avatars", stats.unlockedAvatarKeys)
-            .apply()
-    }
-}
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        Configuration.getInstance().userAgentValue = "LastMileApp/1.0 (iyami1128iyami)"
+        // assets/*.json からブレインロット・武器・ショップデータをロード
+        MasterData.init(applicationContext)
+        // Google Maps SDK 初期化（カスタムマーカーアイコン用）
+        MapsInitializer.initialize(applicationContext)
         setContent {
             MaterialTheme {
                 LastMileAppScreen()
@@ -253,13 +73,22 @@ fun LastMileAppScreen() {
     val gameStorage = remember { GameStorage(context) }
 
     var playerStats by remember { mutableStateOf(gameStorage.recordLaunch()) }
-    var showAvatarDialog by remember { mutableStateOf(false) }
+    var showGachaDialog by remember { mutableStateOf(false) }
+    var showShopDialog by remember { mutableStateOf(false) }
+    var showDexDialog by remember { mutableStateOf(false) }
+    var activeBattle by remember { mutableStateOf<FieldSpawn?>(null) }
 
-    var currentLocation by remember { mutableStateOf(GeoPoint(35.6812, 139.7671)) }
-    var destination by remember { mutableStateOf<GeoPoint?>(null) }
-    var lastCenteredTarget by remember { mutableStateOf<GeoPoint?>(null) }
+    var currentLocation by remember { mutableStateOf(LatLng(35.6812, 139.7671)) }
+    var destination by remember { mutableStateOf<LatLng?>(null) }
+    var lastCenteredTarget by remember { mutableStateOf<LatLng?>(null) }
     var stations by remember { mutableStateOf<List<BikeStation>>(emptyList()) }
-    var statusText by remember { mutableStateOf("地図を長押しして目的地を設定してください") }
+    var fieldSpawns by remember { mutableStateOf<List<FieldSpawn>>(emptyList()) }
+    var coinDrops by remember { mutableStateOf<List<CoinDrop>>(emptyList()) }
+    var statusText by remember { mutableStateOf("ブレインロットをタップでバトル！長押しで目的地を設定") }
+
+    val cameraPositionState = rememberCameraPositionState {
+        position = CameraPosition.fromLatLngZoom(currentLocation, 15.8f)
+    }
 
     var hasLocationPermission by remember {
         mutableStateOf(
@@ -306,7 +135,7 @@ fun LastMileAppScreen() {
         if (hasLocationPermission) {
             fusedLocationClient.lastLocation.addOnSuccessListener { loc ->
                 if (loc != null) {
-                    val newPoint = GeoPoint(loc.latitude, loc.longitude)
+                    val newPoint = LatLng(loc.latitude, loc.longitude)
                     val lastPoint = gameStorage.getLastSavedLocation()
                     if (lastPoint != null) {
                         val moved = distanceBetween(lastPoint, newPoint)
@@ -345,101 +174,238 @@ fun LastMileAppScreen() {
     }
 
     LaunchedEffect(currentLocation) {
-        statusText = "周辺のシェアサイクルを検索中..."
+        if (fieldSpawns.isEmpty()) {
+            fieldSpawns = spawnNearbyBrainrots(currentLocation, 6)
+            coinDrops = spawnNearbyCoins(currentLocation)
+        }
         val fetched = fetchNearbyHelloCycling(currentLocation.latitude, currentLocation.longitude)
         stations = fetched
-        statusText = if (fetched.isNotEmpty()) {
-            "周辺800mに ${fetched.size} 件のポートを発見（地図長押しで目的地設定）"
-        } else {
-            "周辺にポートなし（地図を長押しして目的地を設定）"
+        statusText = "ブレインウォーク｜敵 ${fieldSpawns.size}体 / 🪙 ${coinDrops.size}個 / 🚲 ${fetched.size}件"
+    }
+
+    // 現在地または目的地が更新されたらカメラをスムーズに移動
+    LaunchedEffect(currentLocation, destination) {
+        val target = destination ?: currentLocation
+        if (lastCenteredTarget != target) {
+            cameraPositionState.animate(
+                update = CameraUpdateFactory.newLatLngZoom(target, 15.8f),
+                durationMs = 600
+            )
+            lastCenteredTarget = target
         }
     }
 
-    val currentAvatar = getAvatarByKey(playerStats.selectedAvatarKey)
+    val activeBuffs = remember(playerStats) {
+        val list = mutableListOf<String>()
+        playerStats.companionMonster?.let { c ->
+            list.add("⭐お供:${c.emoji}${companionSkillDesc(c)}")
+        }
+        if (playerStats.nextUncaughtRadar) list.add("🧭未取得確定")
+        if (playerStats.nextRareIncense) list.add("✨SR以上確定")
+        playerStats.nextHabitatFilter?.let { list.add(if (it == "街") "🏙️街のみ" else "🌴ジャングルのみ") }
+        if (playerStats.xpBoostBattlesLeft > 0) list.add("👟XP2倍(残${playerStats.xpBoostBattlesLeft})")
+        list
+    }
 
     Column(modifier = Modifier.fillMaxSize()) {
-        // ヘッダー（常に最前面に固定）
+        // ヘッダー
         Surface(
             color = MaterialTheme.colorScheme.primaryContainer,
             tonalElevation = 4.dp,
             modifier = Modifier
                 .fillMaxWidth()
                 .zIndex(2f)
-                .clickable { showAvatarDialog = true }
         ) {
-            Row(
-                modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Image(
-                    painter = painterResource(id = currentAvatar.imageResId),
-                    contentDescription = currentAvatar.name,
-                    contentScale = ContentScale.Crop,
-                    modifier = Modifier
-                        .size(48.dp)
-                        .clip(CircleShape)
-                        .border(1.5.dp, MaterialTheme.colorScheme.primary, CircleShape)
-                )
-                Spacer(modifier = Modifier.width(12.dp))
-                Column(modifier = Modifier.weight(1f)) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            text = "Lv.${playerStats.level} ${currentAvatar.name}",
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 14.sp
+            Column(modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    val comp = playerStats.companionMonster
+                    if (comp != null) {
+                        MonsterAvatar(
+                            monster = comp,
+                            size = 44.dp,
+                            borderWidth = 2.5.dp,
+                            emojiFontSize = 22.sp,
+                            modifier = Modifier.clickable { showDexDialog = true }
                         )
-                        Text(
-                            text = "🪙 ${playerStats.coins}",
-                            fontWeight = FontWeight.ExtraBold,
-                            fontSize = 15.sp,
-                            color = Color(0xFFD97706)
-                        )
+                    } else {
+                        Box(
+                            modifier = Modifier
+                                .size(44.dp)
+                                .clip(CircleShape)
+                                .background(MaterialTheme.colorScheme.primary)
+                                .border(2.5.dp, Color.White, CircleShape)
+                                .clickable { showDexDialog = true },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text("🧭", fontSize = 22.sp)
+                        }
                     }
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            val upgradeText = if (playerStats.equippedWeaponUpgrade > 0) "+${playerStats.equippedWeaponUpgrade}" else ""
+                            Text(
+                                text = "Lv.${playerStats.level} ATK:${playerStats.totalAtk} (${playerStats.equippedWeapon.emoji}$upgradeText)",
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 13.sp
+                            )
+                            Text(
+                                text = "🪙 ${playerStats.coins}",
+                                fontWeight = FontWeight.ExtraBold,
+                                fontSize = 15.sp,
+                                color = Color(0xFFD97706)
+                            )
+                        }
                         Text(
-                            text = "👟 ${playerStats.totalSteps}歩 / ${(playerStats.totalDistanceMeters / 1000f).let { "%.2f".format(it) }}km",
+                            text = "移動: ${(playerStats.totalDistanceMeters / 1000f).let { "%.2f".format(it) }}km / ${playerStats.totalSteps}歩  図鑑:${playerStats.caughtMonsterIds.size}/${MasterData.brainrots.size}",
                             fontSize = 11.sp,
                             color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f)
                         )
-                        Text(
-                            text = "タップでショップ",
-                            fontSize = 11.sp,
-                            color = MaterialTheme.colorScheme.primary
+                        Spacer(modifier = Modifier.height(3.dp))
+                        LinearProgressIndicator(
+                            progress = { playerStats.currentLevelXp / 100f },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(5.dp)
                         )
                     }
+                }
+
+                if (activeBuffs.isNotEmpty()) {
                     Spacer(modifier = Modifier.height(4.dp))
-                    LinearProgressIndicator(
-                        progress = { playerStats.currentLevelXp / 100f },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(5.dp)
+                    Text(
+                        text = "発動中: ${activeBuffs.joinToString(" / ")}",
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color(0xFFB45309)
                     )
+                }
+
+                Spacer(modifier = Modifier.height(6.dp))
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(5.dp)
+                ) {
+                    Button(
+                        onClick = { showGachaDialog = true },
+                        modifier = Modifier.weight(1f),
+                        contentPadding = PaddingValues(horizontal = 2.dp, vertical = 4.dp)
+                    ) {
+                        Text("⚔️ガチャ", fontSize = 11.sp)
+                    }
+                    Button(
+                        onClick = { showShopDialog = true },
+                        modifier = Modifier.weight(1f),
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFD97706)),
+                        contentPadding = PaddingValues(horizontal = 2.dp, vertical = 4.dp)
+                    ) {
+                        Text("🛒ショップ", fontSize = 11.sp)
+                    }
+                    Button(
+                        onClick = { showDexDialog = true },
+                        modifier = Modifier.weight(1f),
+                        contentPadding = PaddingValues(horizontal = 2.dp, vertical = 4.dp)
+                    ) {
+                        Text("📖図鑑", fontSize = 11.sp)
+                    }
+                    OutlinedButton(
+                        onClick = {
+                            val usedRadar = playerStats.nextUncaughtRadar
+                            val usedIncense = playerStats.nextRareIncense
+                            val usedHabitat = playerStats.nextHabitatFilter
+
+                            val newSpawns = spawnNearbyBrainrots(
+                                center = currentLocation,
+                                count = 6,
+                                caughtIds = playerStats.caughtMonsterIds,
+                                guaranteeUncaught = usedRadar,
+                                guaranteeRare = usedIncense,
+                                habitatFilter = usedHabitat
+                            )
+                            val newCoins = spawnNearbyCoins(currentLocation)
+                            fieldSpawns = newSpawns
+                            coinDrops = newCoins
+                            playerStats = gameStorage.consumeExplorationBuffs()
+
+                            val effectNotes = mutableListOf<String>()
+                            if (usedRadar) effectNotes.add("未取得レーダー発動")
+                            if (usedIncense) effectNotes.add("SR以上確定")
+                            if (usedHabitat != null) effectNotes.add("${usedHabitat}限定")
+                            val prefix = if (effectNotes.isNotEmpty()) "【${effectNotes.joinToString("・")}】" else ""
+
+                            statusText = if (newCoins.isNotEmpty()) {
+                                "${prefix}探索完了！敵 ${newSpawns.size}体 と 🪙 ${newCoins.size}個 を発見！"
+                            } else {
+                                "${prefix}探索完了！ブレインロット ${newSpawns.size}体 が出現！"
+                            }
+                        },
+                        modifier = Modifier.weight(0.9f),
+                        contentPadding = PaddingValues(horizontal = 2.dp, vertical = 4.dp)
+                    ) {
+                        Text("🔄探索", fontSize = 11.sp)
+                    }
                 }
             }
         }
 
-        // サブステータス（常に地図より前面に表示）
+        // サブステータス ＋ 取得済みスキップ切替
         Surface(
             color = MaterialTheme.colorScheme.surfaceVariant,
             modifier = Modifier
                 .fillMaxWidth()
                 .zIndex(2f)
         ) {
-            Text(
-                text = statusText,
-                modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
-                fontSize = 12.sp
-            )
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 10.dp, vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Text(
+                    text = statusText,
+                    fontSize = 11.sp,
+                    modifier = Modifier.weight(1f)
+                )
+                Spacer(modifier = Modifier.width(6.dp))
+                Surface(
+                    color = if (playerStats.skipCaughtBattle) Color(0xFFDCFCE7) else Color(0xFFE5E7EB),
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier
+                        .border(
+                            1.dp,
+                            if (playerStats.skipCaughtBattle) Color(0xFF16A34A) else Color.Gray,
+                            RoundedCornerShape(12.dp)
+                        )
+                        .clickable {
+                            playerStats = gameStorage.toggleSkipCaughtBattle()
+                            statusText = if (playerStats.skipCaughtBattle) {
+                                "⚡ 取得済みスキップON（捕獲済みキャラはタップで即決着）"
+                            } else {
+                                "取得済みスキップOFF（通常バトル）"
+                            }
+                        }
+                ) {
+                    Text(
+                        text = if (playerStats.skipCaughtBattle) "⚡既得スキップ:ON" else "既得スキップ:OFF",
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = if (playerStats.skipCaughtBattle) Color(0xFF15803D) else Color.DarkGray,
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                    )
+                }
+            }
         }
 
-        // 地図エリア（clipToBounds で枠外への描画はみ出しを防止）
+        // Googleマップエリア
         Box(
             modifier = Modifier
                 .weight(1f)
@@ -447,78 +413,104 @@ fun LastMileAppScreen() {
                 .clipToBounds()
                 .zIndex(0f)
         ) {
-            AndroidView(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .clipToBounds(),
-                factory = { ctx ->
-                    MapView(ctx).apply {
-                        // 国土地理院 淡色地図（白ベースで見やすい無料地図）
-                        setTileSource(
-                            XYTileSource(
-                                "GSI_PALE",
-                                5, 18, 256, ".png",
-                                arrayOf("https://cyberjapandata.gsi.go.jp/xyz/pale/")
-                            )
-                        )
-                        setMultiTouchControls(true)
-                        controller.setZoom(15.5)
-                        controller.setCenter(currentLocation)
-                    }
-                },
-                update = { mapView ->
-                    mapView.overlays.clear()
+            val coinBitmap = remember { createCoinMarkerBitmap() }
 
-                    val eventsOverlay = MapEventsOverlay(object : MapEventsReceiver {
-                        override fun singleTapConfirmedHelper(p: GeoPoint?): Boolean = false
-                        override fun longPressHelper(p: GeoPoint?): Boolean {
-                            if (p != null) destination = p
-                            return true
-                        }
-                    })
-                    mapView.overlays.add(eventsOverlay)
-
-                    val myMarker = Marker(mapView).apply {
-                        position = currentLocation
-                        title = "${currentAvatar.name} (Lv.${playerStats.level})"
-                        setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_BOTTOM)
-
-                        val bitmap = BitmapFactory.decodeResource(context.resources, currentAvatar.imageResId)
-                        val scaledBitmap = Bitmap.createScaledBitmap(bitmap, 96, 96, true)
-                        icon = BitmapDrawable(context.resources, scaledBitmap)
-                    }
-                    mapView.overlays.add(myMarker)
-
-                    stations.forEach { st ->
-                        val m = Marker(mapView).apply {
-                            position = GeoPoint(st.lat, st.lon)
-                            title = "${st.name} (空き: ${st.bikesAvailable}台)"
-                            setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_BOTTOM)
-                        }
-                        mapView.overlays.add(m)
-                    }
-
-                    destination?.let { dest ->
-                        val destMarker = Marker(mapView).apply {
-                            position = dest
-                            title = "目的地"
-                            setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_BOTTOM)
-                        }
-                        mapView.overlays.add(destMarker)
-                    }
-
-                    // 現在地や目的地が変わった時だけカメラを移動（手動スクロールを邪魔しない）
-                    val target = destination ?: currentLocation
-                    if (lastCenteredTarget != target) {
-                        mapView.controller.animateTo(target)
-                        lastCenteredTarget = target
-                    }
-                    mapView.invalidate()
+            GoogleMap(
+                modifier = Modifier.fillMaxSize(),
+                cameraPositionState = cameraPositionState,
+                properties = MapProperties(isMyLocationEnabled = hasLocationPermission),
+                uiSettings = MapUiSettings(
+                    myLocationButtonEnabled = hasLocationPermission,
+                    zoomControlsEnabled = false,
+                    compassEnabled = true
+                ),
+                onMapLongClick = { latLng ->
+                    destination = latLng
                 }
-            )
+            ) {
+                // シェアサイクルポート（HELLO CYCLING）
+                stations.forEach { st ->
+                    val state = remember(st.id) { MarkerState(position = LatLng(st.lat, st.lon)) }
+                    Marker(
+                        state = state,
+                        title = "🚲 ${st.name}",
+                        snippet = "空き: ${st.bikesAvailable}台",
+                        icon = runCatching {
+                            BitmapDescriptorFactory.defaultMarker(BitmapDescriptorFactory.HUE_AZURE)
+                        }.getOrNull()
+                    )
+                }
+
+                // フィールド上のドロップコイン（タップで即獲得）
+                coinDrops.forEach { drop ->
+                    val state = remember(drop.dropId) { MarkerState(position = drop.location) }
+                    val coinIcon = remember(drop.dropId) {
+                        runCatching { BitmapDescriptorFactory.fromBitmap(coinBitmap) }.getOrNull()
+                    }
+                    Marker(
+                        state = state,
+                        title = "🪙 ドロップコイン (+${drop.amount}🪙)",
+                        anchor = Offset(0.5f, 0.5f),
+                        icon = coinIcon,
+                        onClick = {
+                            playerStats = gameStorage.addCoins(drop.amount)
+                            coinDrops = coinDrops.filter { it.dropId != drop.dropId }
+                            statusText = "🪙 フィールドのコイン（+${drop.amount}🪙）を拾った！"
+                            true
+                        }
+                    )
+                }
+
+                // フィールド上のブレインロット（タップでバトル / 既得スキップ）
+                fieldSpawns.forEach { spawn ->
+                    val state = remember(spawn.spawnId) { MarkerState(position = spawn.location) }
+                    val monsterIcon = remember(spawn.monster.id) {
+                        runCatching {
+                            BitmapDescriptorFactory.fromBitmap(
+                                createMonsterMarkerBitmap(context, spawn.monster)
+                            )
+                        }.getOrNull()
+                    }
+                    Marker(
+                        state = state,
+                        title = "${spawn.monster.name} [${spawn.monster.rarity}]",
+                        anchor = Offset(0.5f, 0.5f),
+                        icon = monsterIcon,
+                        onClick = {
+                            val isCaught = playerStats.caughtMonsterIds.contains(spawn.monster.id)
+                            if (playerStats.skipCaughtBattle && isCaught) {
+                                val won = simulateQuickBattle(playerStats, spawn.monster)
+                                if (won) {
+                                    val (updated, gainedCoins, gainedXp) = gameStorage.recordMonsterCatch(spawn.monster)
+                                    playerStats = updated
+                                    fieldSpawns = fieldSpawns.filter { it.spawnId != spawn.spawnId }
+                                    statusText = "⚡スキップ勝利！${spawn.monster.name} (+${gainedCoins}🪙 / +${gainedXp}XP)"
+                                } else {
+                                    statusText = "⚡スキップ敗北… ${spawn.monster.name} は強すぎた！武器を強化しよう"
+                                }
+                            } else {
+                                activeBattle = spawn
+                            }
+                            true
+                        }
+                    )
+                }
+
+                // 目的地ピン
+                destination?.let { dest ->
+                    val destState = remember(dest) { MarkerState(position = dest) }
+                    Marker(
+                        state = destState,
+                        title = "目的地",
+                        icon = runCatching {
+                            BitmapDescriptorFactory.defaultMarker(BitmapDescriptorFactory.HUE_RED)
+                        }.getOrNull()
+                    )
+                }
+            }
         }
 
-        // 目的地比較カード（常に地図より前面に表示）
+        // 目的地設定時の移動手段比較カード
         destination?.let { dest ->
             val options = remember(currentLocation, dest, stations) {
                 buildTransportOptions(currentLocation, dest, stations)
@@ -527,7 +519,7 @@ fun LastMileAppScreen() {
                 tonalElevation = 6.dp,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .heightIn(max = 280.dp)
+                    .heightIn(max = 260.dp)
                     .zIndex(2f)
             ) {
                 Column(modifier = Modifier.padding(12.dp)) {
@@ -581,197 +573,72 @@ fun LastMileAppScreen() {
         }
     }
 
-    if (showAvatarDialog) {
-        AlertDialog(
-            onDismissRequest = { showAvatarDialog = false },
-            title = {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text("アバターショップ", fontSize = 18.sp, fontWeight = FontWeight.Bold)
-                    Text("🪙 ${playerStats.coins}", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = Color(0xFFD97706))
-                }
+    if (showGachaDialog) {
+        WeaponGachaDialog(
+            stats = playerStats,
+            onPullGacha = {
+                val res = gameStorage.pullGacha()
+                if (res != null) {
+                    playerStats = res.first
+                    res.second
+                } else null
             },
-            text = {
-                LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    items(AVATAR_LIST) { item ->
-                        val isUnlocked = playerStats.unlockedAvatarKeys.contains(item.key)
-                        val isSelected = playerStats.selectedAvatarKey == item.key
-                        val canAfford = playerStats.coins >= item.priceCoins
+            onEquipWeapon = { weaponId ->
+                playerStats = gameStorage.equipWeapon(weaponId)
+            },
+            onDismiss = { showGachaDialog = false }
+        )
+    }
 
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .border(
-                                    width = if (isSelected) 2.dp else 1.dp,
-                                    color = if (isSelected) MaterialTheme.colorScheme.primary else Color.LightGray,
-                                    shape = RoundedCornerShape(8.dp)
-                                )
-                                .clickable(enabled = isUnlocked || canAfford) {
-                                    playerStats = gameStorage.buyAndSelectAvatar(item)
-                                    showAvatarDialog = false
-                                }
-                                .padding(10.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            if (isUnlocked) {
-                                Image(
-                                    painter = painterResource(id = item.imageResId),
-                                    contentDescription = item.name,
-                                    contentScale = ContentScale.Crop,
-                                    modifier = Modifier
-                                        .size(44.dp)
-                                        .clip(CircleShape)
-                                        .border(1.dp, Color.Gray, CircleShape)
-                                )
-                            } else {
-                                Box(
-                                    modifier = Modifier
-                                        .size(44.dp)
-                                        .clip(CircleShape)
-                                        .border(1.dp, Color.LightGray, CircleShape),
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    Text("🔒", fontSize = 20.sp)
-                                }
-                            }
-                            Spacer(modifier = Modifier.width(12.dp))
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    text = item.name,
-                                    fontWeight = FontWeight.Bold,
-                                    color = if (isUnlocked || canAfford) Color.Unspecified else Color.Gray
-                                )
-                                Text(
-                                    text = when {
-                                        isSelected -> "使用中"
-                                        isUnlocked -> "解放済み（タップで装備）"
-                                        canAfford -> "🪙 ${item.priceCoins} で購入可能！"
-                                        else -> "🪙 ${item.priceCoins} 必要"
-                                    },
-                                    fontSize = 12.sp,
-                                    color = if (!isUnlocked && canAfford) Color(0xFFD97706) else Color.Gray
-                                )
-                            }
-                        }
-                    }
+    if (showShopDialog) {
+        ItemShopDialog(
+            stats = playerStats,
+            onBuyItem = { item ->
+                val res = gameStorage.buyShopItem(item)
+                if (res != null) {
+                    playerStats = res.first
+                    statusText = res.second
+                    res.second
+                } else null
+            },
+            onDismiss = { showShopDialog = false }
+        )
+    }
+
+    if (showDexDialog) {
+        BrainrotDexDialog(
+            caughtIds = playerStats.caughtMonsterIds,
+            companionId = playerStats.companionMonsterId,
+            onSetCompanion = { mId ->
+                playerStats = gameStorage.setCompanion(mId)
+                val comp = playerStats.companionMonster
+                statusText = if (comp != null) {
+                    "⭐ ${comp.name} をお供にした！（${companionSkillDesc(comp)}）"
+                } else {
+                    "お供を外しました"
                 }
             },
-            confirmButton = {
-                TextButton(onClick = { showAvatarDialog = false }) {
-                    Text("閉じる")
-                }
+            onDismiss = { showDexDialog = false }
+        )
+    }
+
+    activeBattle?.let { spawn ->
+        BattleDialog(
+            spawn = spawn,
+            playerStats = playerStats,
+            onConsumeItem = { itemType ->
+                playerStats = gameStorage.consumeBattleItem(itemType)
+            },
+            onWin = {
+                val (updated, gainedCoins, gainedXp) = gameStorage.recordMonsterCatch(spawn.monster)
+                playerStats = updated
+                fieldSpawns = fieldSpawns.filter { it.spawnId != spawn.spawnId }
+                statusText = "${spawn.monster.name} をゲット！(+${gainedCoins}🪙 / +${gainedXp}XP)"
+                activeBattle = null
+            },
+            onEscapeOrLose = {
+                activeBattle = null
             }
         )
     }
-}
-
-fun distanceBetween(a: GeoPoint, b: GeoPoint): Float {
-    val result = FloatArray(1)
-    Location.distanceBetween(a.latitude, a.longitude, b.latitude, b.longitude, result)
-    return result[0]
-}
-
-fun buildTransportOptions(
-    start: GeoPoint,
-    end: GeoPoint,
-    stations: List<BikeStation>
-): List<TransportOption> {
-    val distMeters = distanceBetween(start, end)
-    val walkMin = ceil(distMeters / 80.0).toInt().coerceAtLeast(1)
-
-    val nearestBike = stations.filter { it.bikesAvailable > 0 }.minByOrNull { it.distanceMeters }
-    val bikeMin = ceil(distMeters / 250.0).toInt().coerceAtLeast(1) +
-            if (nearestBike != null) ceil(nearestBike.distanceMeters / 80.0).toInt() else 3
-
-    val extraUnits = ((distMeters - 1096f).coerceAtLeast(0f) / 255f).let { ceil(it).toInt() }
-    val taxiYen = 500 + extraUnits * 100
-    val taxiMin = ceil(distMeters / 400.0).toInt().coerceAtLeast(2)
-
-    val gmapsBase = "https://www.google.com/maps/dir/?api=1&origin=${start.latitude},${start.longitude}&destination=${end.latitude},${end.longitude}"
-
-    return listOf(
-        TransportOption(
-            title = "徒歩",
-            subtitle = "Googleマップで徒歩ルートを開く",
-            estimate = "約${walkMin}分",
-            actionUrl = "$gmapsBase&travelmode=walking"
-        ),
-        TransportOption(
-            title = "シェアサイクル (HELLO CYCLING)",
-            subtitle = if (nearestBike != null) {
-                "最寄り: ${nearestBike.name} (空き${nearestBike.bikesAvailable}台 / ${nearestBike.distanceMeters.roundToInt()}m)"
-            } else {
-                "周辺に空き自転車が見つかりません（アプリで確認）"
-            },
-            estimate = "約${bikeMin}分",
-            actionUrl = "https://www.hellocycling.jp/app/openapp"
-        ),
-        TransportOption(
-            title = "タクシー (GO)",
-            subtitle = "配車アプリを起動して呼ぶ",
-            estimate = "約${taxiMin}分 / 約${taxiYen}円",
-            actionUrl = "https://go.mo-t.com/"
-        ),
-        TransportOption(
-            title = "バス・公共交通",
-            subtitle = "Googleマップでバス・電車ルートを検索",
-            estimate = "経路検索",
-            actionUrl = "$gmapsBase&travelmode=transit"
-        )
-    )
-}
-
-fun openExternalUrl(context: Context, url: String) {
-    val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url))
-    context.startActivity(intent)
-}
-
-suspend fun fetchNearbyHelloCycling(lat: Double, lon: Double): List<BikeStation> = withContext(Dispatchers.IO) {
-    try {
-        val infoJson = httpGet("https://api-public.odpt.org/api/v4/gbfs/hellocycling/station_information.json")
-        val statusJson = httpGet("https://api-public.odpt.org/api/v4/gbfs/hellocycling/station_status.json")
-
-        val statusMap = mutableMapOf<String, Int>()
-        val statusArr = JSONObject(statusJson).getJSONObject("data").getJSONArray("stations")
-        for (i in 0 until statusArr.length()) {
-            val obj = statusArr.getJSONObject(i)
-            statusMap[obj.getString("station_id")] = obj.optInt("num_bikes_available", 0)
-        }
-
-        val result = mutableListOf<BikeStation>()
-        val infoArr = JSONObject(infoJson).getJSONObject("data").getJSONArray("stations")
-        val distResult = FloatArray(1)
-        for (i in 0 until infoArr.length()) {
-            val obj = infoArr.getJSONObject(i)
-            val sLat = obj.getDouble("lat")
-            val sLon = obj.getDouble("lon")
-            Location.distanceBetween(lat, lon, sLat, sLon, distResult)
-            if (distResult[0] <= 800f) {
-                val id = obj.getString("station_id")
-                result.add(
-                    BikeStation(
-                        id = id,
-                        name = obj.optString("name", "ポート"),
-                        lat = sLat,
-                        lon = sLon,
-                        bikesAvailable = statusMap[id] ?: 0,
-                        distanceMeters = distResult[0]
-                    )
-                )
-            }
-        }
-        result.sortedBy { it.distanceMeters }
-    } catch (e: Exception) {
-        emptyList()
-    }
-}
-
-private fun httpGet(urlStr: String): String {
-    val conn = URL(urlStr).openConnection() as HttpURLConnection
-    conn.connectTimeout = 8000
-    conn.readTimeout = 8000
-    return conn.inputStream.bufferedReader().use { it.readText() }
 }
